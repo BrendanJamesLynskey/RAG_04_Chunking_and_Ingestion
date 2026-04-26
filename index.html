@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG 04 — Chunking & Ingestion</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-card: #0d1117;
+            --bg-code: #161b22;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent: #76B900;
+            --accent-dim: #76B90044;
+            --accent-glow: #76B90033;
+            --border: #21262d;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+            --font-body: 'Inter', sans-serif;
+            --max-width: 900px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-body);
+            font-size: 17px;
+            line-height: 1.7;
+            overflow-x: hidden;
+        }
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            position: relative;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+        .hero > * { position: relative; z-index: 1; }
+        .series-label {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+        }
+        .hero h1 {
+            font-family: var(--font-display);
+            font-size: clamp(2rem, 5vw, 3.2rem);
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+            margin-bottom: 1rem;
+        }
+        .hero h1 .accent { color: var(--accent); }
+        .hero .subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 640px;
+            margin-bottom: 2rem;
+        }
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-bottom: 2.5rem;
+        }
+        .tag {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            background: var(--accent-dim);
+            white-space: nowrap;
+        }
+        .pipeline {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+            margin-bottom: 1rem;
+            max-width: var(--max-width);
+        }
+        .pipeline-step {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            padding: 0.3rem 0.7rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .pipeline-arrow { color: var(--accent); font-size: 0.9rem; font-weight: 700; }
+        .slide {
+            min-height: 100vh;
+            max-width: var(--max-width);
+            margin: 0 auto;
+            padding: 4rem 1.5rem;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .slide-number {
+            font-family: var(--font-display);
+            font-size: 5rem;
+            font-weight: 700;
+            color: var(--accent-dim);
+            position: absolute;
+            top: 2rem;
+            right: 1.5rem;
+            line-height: 1;
+            user-select: none;
+        }
+        .slide h2 {
+            font-family: var(--font-display);
+            font-size: 1.9rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 1.5rem;
+            line-height: 1.25;
+        }
+        .slide h3 {
+            font-family: var(--font-display);
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+        .slide p { margin-bottom: 1rem; color: var(--text-secondary); }
+        .slide p strong { color: var(--text-primary); }
+        .slide ul, .slide ol { margin-bottom: 1rem; padding-left: 1.5rem; color: var(--text-secondary); }
+        .slide li { margin-bottom: 0.4rem; }
+        .slide li strong { color: var(--text-primary); }
+        .slide code {
+            font-family: var(--font-mono);
+            font-size: 0.88em;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            padding: 0.05rem 0.35rem;
+            border-radius: 3px;
+            color: #c9d1d9;
+        }
+        .code-block {
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin: 1.25rem 0;
+            overflow: hidden;
+        }
+        .code-header {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--accent);
+            background: rgba(118, 185, 0, 0.08);
+            padding: 0.4rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .code-block pre { margin: 0; padding: 1rem; overflow-x: auto; }
+        .code-block code {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: #c9d1d9;
+            background: transparent;
+            border: none;
+            padding: 0;
+        }
+        .kw { color: #ff7b72; }
+        .fn { color: #d2a8ff; }
+        .str { color: #a5d6ff; }
+        .cm { color: #8b949e; font-style: italic; }
+        .num { color: #79c0ff; }
+        .type { color: #ffa657; }
+        .dir { color: #ff7b72; }
+        .mac { color: #ffa657; }
+        .table-wrap {
+            overflow-x: auto;
+            margin: 1.25rem 0;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th {
+            background: var(--bg-code);
+            color: var(--accent);
+            font-weight: 600;
+            text-align: left;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            font-family: var(--font-display);
+            white-space: nowrap;
+        }
+        td {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        tr:last-child td { border-bottom: none; }
+        tr:nth-child(even) td { background: rgba(13, 17, 23, 0.5); }
+        .diagram-flow {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-box {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            text-align: center;
+            white-space: nowrap;
+        }
+        .diagram-box.accent { border-color: var(--accent); color: var(--accent); background: rgba(118, 185, 0, 0.08); }
+        .diagram-box.dim { color: var(--text-secondary); border-color: var(--border); }
+        .diagram-arrow { color: var(--accent); font-size: 1.3rem; font-weight: 700; }
+        .diagram-vertical {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.3rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-vertical .diagram-arrow { font-size: 1.1rem; }
+        .hierarchy {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .hierarchy-level { display: flex; align-items: center; gap: 0.75rem; }
+        .hierarchy-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            min-width: 80px;
+            text-align: right;
+        }
+        .hierarchy-items { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+        .hierarchy-item {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 4px;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        .hierarchy-item.accent { border-color: var(--accent); color: var(--accent); background: rgba(118, 185, 0, 0.08); }
+        .diagram-grid {
+            display: grid;
+            gap: 0.75rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+        .diagram-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .diagram-panel {
+            padding: 1rem;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .diagram-panel.accent-border { border-left: 3px solid var(--accent); }
+        .diagram-panel h4 {
+            font-family: var(--font-display);
+            font-size: 1rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+        .diagram-panel p, .diagram-panel ul { font-size: 0.85rem; }
+        .callout {
+            background: var(--bg-card);
+            border-left: 3px solid var(--accent);
+            border-radius: 0 8px 8px 0;
+            padding: 1rem 1.25rem;
+            margin: 1.25rem 0;
+        }
+        .callout p { margin-bottom: 0; }
+        .callout p + p { margin-top: 0.5rem; }
+        .callout .callout-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.3rem;
+        }
+        .contents-list { list-style: none; padding-left: 0; counter-reset: contents; }
+        .contents-list li {
+            counter-increment: contents;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .contents-list li:last-child { border-bottom: none; }
+        .contents-list li::before {
+            content: counter(contents, decimal-leading-zero);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent);
+            min-width: 2rem;
+        }
+        .contents-list a { color: var(--text-primary); text-decoration: none; transition: color 0.2s; }
+        .contents-list a:hover { color: var(--accent); }
+        .footer {
+            text-align: center;
+            padding: 3rem 1.5rem;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+            max-width: var(--max-width);
+            margin: 0 auto;
+        }
+        .footer a { color: var(--accent); text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+        .canvas-wrap {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1.25rem 0;
+            overflow-x: auto;
+        }
+        .canvas-wrap canvas, .canvas-wrap svg { display: block; margin: 0 auto; max-width: 100%; }
+        .badge {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            padding: 0.1rem 0.45rem;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            vertical-align: middle;
+            margin-left: 0.3rem;
+        }
+        .badge.ok    { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+        .badge.warn  { border-color: #ffa657; color: #ffa657; background: rgba(255,166,87,0.08); }
+        .badge.bad   { border-color: #ff7b72; color: #ff7b72; background: rgba(255,123,114,0.08); }
+        @media (max-width: 640px) {
+            .slide { padding: 3rem 1rem; min-height: auto; }
+            .slide-number { font-size: 3rem; top: 1.5rem; right: 1rem; }
+            .slide h2 { font-size: 1.5rem; }
+            .diagram-grid.cols-2, .diagram-grid.cols-3 { grid-template-columns: 1fr; }
+            .pipeline { gap: 0.15rem; }
+            .pipeline-step { font-size: 0.6rem; padding: 0.2rem 0.4rem; }
+            .hero h1 { font-size: 1.8rem; }
+            table { font-size: 0.78rem; }
+        }
+    </style>
+</head>
+<body>
+<header class="hero">
+    <div class="series-label">RAG &amp; Retrieval Systems Series &mdash; Presentation 04</div>
+    <h1>Chunking &amp; Ingestion &mdash; <span class="accent">The Unit You Index</span></h1>
+    <p class="subtitle">Chunking strategies, layout-aware parsing (Unstructured, MinerU, LlamaParse, Docling), ColPali vision parsing, metadata enrichment, deduplication, and incremental ingestion design.</p>
+    <div class="tags">
+        <span class="tag">Chunking</span>
+        <span class="tag">Unstructured</span>
+        <span class="tag">MinerU</span>
+        <span class="tag">LlamaParse</span>
+        <span class="tag">Docling</span>
+        <span class="tag">ColPali</span>
+        <span class="tag">MinHash</span>
+    </div>
+    <div class="pipeline">
+        <span class="pipeline-step">Raw docs</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Parse</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Chunk</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Enrich metadata</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Dedup</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Embed</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Index</span>
+    </div>
+</header>
+
+<section class="slide" id="slide-00">
+    <div class="slide-number">00</div>
+    <h2>Topics We'll Cover</h2>
+    <ul class="contents-list">
+        <li><a href="#slide-01">Chunking Philosophy &mdash; The Unit You Index Is the Unit You Retrieve</a></li>
+        <li><a href="#slide-02">Strategies &mdash; Fixed, Semantic, Structural, Contextual (Anthropic)</a></li>
+        <li><a href="#slide-03">Recursive Character Splitting and Where It Breaks</a></li>
+        <li><a href="#slide-04">Layout-Aware Parsing &mdash; Unstructured, MinerU, LlamaParse, Docling</a></li>
+        <li><a href="#slide-05">ColPali &amp; Vision-Based Document Parsing</a></li>
+        <li><a href="#slide-06">Metadata Enrichment &mdash; Sections, Authors, Dates, Citations</a></li>
+        <li><a href="#slide-07">Deduplication &mdash; MinHash, SimHash, Near-Duplicate Detection</a></li>
+        <li><a href="#slide-08">Pipeline Shape &mdash; Incremental Ingestion, Embedding Refresh</a></li>
+        <li><a href="#slide-09">What to Take Away</a></li>
+    </ul>
+</section>
+
+<section class="slide" id="slide-01">
+    <div class="slide-number">01</div>
+    <h2>Chunking Philosophy &mdash; The Unit You Index Is the Unit You Retrieve</h2>
+    <p>Chunking is the most consequential decision in a RAG pipeline and the most overlooked. The chunk is the atomic unit of retrieval: <strong>what you index is what you return to the LLM</strong>. A poor chunk boundary splits an answer across two chunks; a poor chunk size under-represents context or wastes token budget.</p>
+    <div class="diagram-grid cols-2">
+        <div class="diagram-panel accent-border">
+            <h4>The embedding granularity tension</h4>
+            <p>Short chunks (64&ndash;128 tokens): precise retrieval, poor context. The embedding captures the specific fact but the LLM sees it without surrounding explanation. Long chunks (512&ndash;1024 tokens): rich context, imprecise retrieval. The embedding averages over too many topics. The sweet spot for most corpora is <strong>256&ndash;512 tokens with 20% overlap</strong>.</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Parent&ndash;child chunking</h4>
+            <p>Index <em>small</em> chunks for retrieval precision, but return the <em>parent</em> chunk (the surrounding paragraph or section) to the LLM for richer context. LlamaIndex's <code>ParentDocumentRetriever</code> and LangChain's <code>ParentDocumentRetriever</code> both implement this. The trade-off: higher LLM token cost per retrieved chunk.</p>
+        </div>
+    </div>
+    <div class="callout">
+        <div class="callout-label">The retrieval unit vs context unit distinction</div>
+        <p><strong>Retrieval unit</strong>: the chunk whose embedding is compared against the query embedding. Should be specific and dense with relevant content. <strong>Context unit</strong>: what the LLM actually reads. May be the parent of the retrieval unit, augmented with surrounding sentences, or the full source document section. These are separate concepts &mdash; conflating them is the source of most chunking bugs.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-02">
+    <div class="slide-number">02</div>
+    <h2>Strategies &mdash; Fixed, Semantic, Structural, Contextual (Anthropic)</h2>
+    <p>Four distinct chunking philosophies, each suited to different document types and retrieval objectives.</p>
+    <div class="diagram-grid cols-2">
+        <div class="diagram-panel accent-border">
+            <h4>Fixed-size</h4>
+            <p>Split every N tokens with an overlap of M tokens (e.g. 512/50). Fast, predictable, no NLP required. Works for homogeneous plain-text corpora. Fails badly on structured documents: splits mid-table, mid-code-block, mid-formula. Implementation: LangChain <code>TokenTextSplitter</code> with <code>tiktoken</code>.</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Semantic / sentence-boundary</h4>
+            <p>Use a sentence splitter (spaCy sentenciser, NLTK PunktTokenizer) to split on sentence boundaries, then group sentences until a token budget is reached. Produces more natural chunks. Semantic chunking (Kamradt 2023) uses embedding similarity between adjacent sentences to detect topic shifts; computationally expensive but highest quality for long prose.</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Structural</h4>
+            <p>Respect document structure: split at headings (Markdown H1/H2), XML/HTML tags, PDF logical sections, code function boundaries. Each chunk maps to a logical unit. Requires a parser that understands the document format. Docling and Unstructured both output structured elements that enable this natively.</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Contextual (Anthropic)</h4>
+            <p>Introduced in Anthropic's <em>Contextual Retrieval</em> blog post (2024). For each chunk, prepend a short context paragraph generated by Claude explaining what the chunk is about relative to the full document. This "context-enhanced chunk" is then embedded. Improves Recall@20 by 35% on some benchmarks. Cost: one LLM call per chunk at index time.</p>
+        </div>
+    </div>
+</section>
+
+<section class="slide" id="slide-03">
+    <div class="slide-number">03</div>
+    <h2>Recursive Character Splitting and Where It Breaks</h2>
+    <p><strong>RecursiveCharacterTextSplitter</strong> (LangChain) is the most widely used open-source chunker. It tries separators in order (<code>["\n\n", "\n", ". ", " ", ""]</code>) and recursively subdivides sections that exceed the target chunk size.</p>
+    <div class="code-block">
+        <div class="code-header">RecursiveCharacterTextSplitter &mdash; key configuration</div>
+<pre><code><span class="kw">from</span> langchain_text_splitters <span class="kw">import</span> RecursiveCharacterTextSplitter
+
+splitter = <span class="fn">RecursiveCharacterTextSplitter</span>(
+    chunk_size=<span class="num">512</span>,           <span class="cm"># in characters, not tokens!</span>
+    chunk_overlap=<span class="num">64</span>,
+    length_function=<span class="kw">len</span>,
+    <span class="cm"># For token-accurate splitting, pass tiktoken counter:</span>
+    <span class="cm"># length_function=lambda s: len(enc.encode(s))</span>
+    separators=[<span class="str">"\n\n"</span>, <span class="str">"\n"</span>, <span class="str">". "</span>, <span class="str">" "</span>, <span class="str">""</span>],
+    is_separator_regex=<span class="kw">False</span>,
+)
+
+chunks = splitter.<span class="fn">split_text</span>(document_text)</code></pre>
+    </div>
+    <p><strong>Where it fails:</strong></p>
+    <ul>
+        <li><strong>Tables in Markdown:</strong> splits mid-row, destroying the tabular structure. The cell content is then incoherent without the header row.</li>
+        <li><strong>Code blocks:</strong> splits mid-function. The resulting chunk has a dangling <code>def</code> with no body.</li>
+        <li><strong>PDF extraction artefacts:</strong> extracted text from two-column PDFs interleaves columns line by line. No splitter recovers from this without layout-aware parsing upstream.</li>
+        <li><strong>Footnotes and asides:</strong> footnote text is interleaved with body text after naive PDF extraction; the chunk conflates footnote and main text.</li>
+    </ul>
+    <div class="callout">
+        <div class="callout-label">Use character count or token count?</div>
+        <p>Always use <strong>token count</strong> for chunks destined for an LLM context window. Character count underestimates cost for CJK text (each character is 1 char but 1&ndash;3 tokens) and overestimates for ASCII code (1 identifier may be 3+ tokens). Pass a <code>tiktoken</code> encoder as the length function; the overhead is negligible.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-04">
+    <div class="slide-number">04</div>
+    <h2>Layout-Aware Parsing &mdash; Unstructured, MinerU, LlamaParse, Docling</h2>
+    <p>For PDFs, Word documents, HTML, and other richly structured formats, text extraction must preserve layout semantics. Four tools dominate this space.</p>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Tool</th><th>Approach</th><th>Output format</th><th>Best for</th><th>Limitation</th></tr></thead>
+            <tbody>
+                <tr><td><strong>Unstructured</strong> (v0.14)</td><td>Rule-based + ML element detection (YOLOv8 for layout, Tesseract for OCR). Open-source core + hosted API.</td><td>List of <code>Element</code> objects (Title, NarrativeText, Table, ListItem&hellip;)</td><td>General-purpose; large pipelines; LangChain/LlamaIndex integration</td><td>Table extraction quality lags behind commercial tools</td></tr>
+                <tr><td><strong>MinerU</strong> (v1.x)</td><td>PDF-focused pipeline: PyMuPDF layout + PaddleOCR + custom table detector. Open-source (AGPL).</td><td>Markdown + JSON with bounding boxes</td><td>Academic papers, Chinese-language PDFs, complex multi-column layouts</td><td>Requires PaddlePaddle; slower than Unstructured for simple docs</td></tr>
+                <tr><td><strong>LlamaParse</strong> (cloud)</td><td>Cloud API by LlamaIndex; proprietary LLM-assisted parsing</td><td>Markdown, JSON, HTML</td><td>Highest quality on complex layouts; charts, nested tables</td><td>API cost; no self-host; privacy constraints</td></tr>
+                <tr><td><strong>Docling</strong> (v2.x, IBM)</td><td>Multi-modal: layout model (DocLayNet-trained) + OCR (EasyOCR/Tesseract) + table structure recognition</td><td>DoclingDocument (JSON) + Markdown export</td><td>Enterprise documents; hierarchical section structure; open-source</td><td>Newer; smaller ecosystem than Unstructured</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="callout">
+        <div class="callout-label">Docling is the emerging open-source leader</div>
+        <p>Docling v2 (2024) uses IBM's DocLayNet dataset (80k+ annotated pages) and produces a <code>DoclingDocument</code> with a full document hierarchy: document &rarr; sections &rarr; paragraphs &rarr; cells. The hierarchy directly enables structural chunking. Install: <code>pip install docling</code>. It supports PDF, DOCX, PPTX, HTML, and image inputs and runs fully locally including OCR and table structure recognition.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-05">
+    <div class="slide-number">05</div>
+    <h2>ColPali &amp; Vision-Based Document Parsing</h2>
+    <p><strong>ColPali</strong> (Faysse et al. 2024) takes a radically different approach: instead of extracting text from PDFs, it embeds each <em>page image</em> directly using a PaliGemma-based vision encoder, then indexes per-patch token embeddings using ColBERT-style late interaction.</p>
+    <div class="diagram-flow">
+        <div class="diagram-box accent">PDF page<br><small>(rendered as image)</small></div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box">PaliGemma<br>vision encoder</div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box accent">1030 patch<br>token vectors<br><small>[1030 &times; 128]</small></div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box">Index in<br>Qdrant (multi-vector)</div>
+        <div class="diagram-arrow">&rarr;</div>
+        <div class="diagram-box accent">MaxSim<br>retrieval</div>
+    </div>
+    <p><strong>Why this matters:</strong> ColPali retrieves pages containing charts, complex tables, and diagrams that would be mangled by text extraction. On the DocVQA and SlideVQA benchmarks, ColPali achieves 81.3% NDCG@5 vs 60.1% for the best text-extraction + BGE-M3 pipeline.</p>
+    <div class="code-block">
+        <div class="code-header">ColPali indexing via byaldi (pip install byaldi)</div>
+<pre><code><span class="kw">from</span> byaldi <span class="kw">import</span> RAGMultiModalModel
+
+model = RAGMultiModalModel.<span class="fn">from_pretrained</span>(<span class="str">"vidore/colpali-v1.3"</span>)
+
+<span class="cm"># Index a folder of PDFs (converts to page images internally)</span>
+model.<span class="fn">index</span>(
+    input_path=<span class="str">"./pdfs/"</span>,
+    index_name=<span class="str">"my_docs"</span>,
+    store_collection_with_index=<span class="kw">True</span>,
+    overwrite=<span class="kw">True</span>,
+)
+
+<span class="cm"># Retrieve: returns ranked list of (page_image, score, page_num)</span>
+results = model.<span class="fn">search</span>(<span class="str">"quarterly revenue breakdown by region"</span>, k=<span class="num">5</span>)
+<span class="cm"># Pass page images directly to a VLM (e.g. GPT-4o, Claude 3)</span></code></pre>
+    </div>
+    <div class="callout">
+        <div class="callout-label">ColPali storage cost is significant</div>
+        <p>Each PDF page produces ~1030 patch vectors of 128 dims: ~528 KB per page in float32. A 1000-page document corpus costs ~500 MB. For large corpora, combine with binary quantisation (Qdrant multi-vector support) to reduce to ~16 KB per page. ColPali is best used for document types where text extraction routinely fails: scanned documents, slide decks, financial tables, engineering drawings.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-06">
+    <div class="slide-number">06</div>
+    <h2>Metadata Enrichment &mdash; Sections, Authors, Dates, Citations</h2>
+    <p>Metadata is the invisible infrastructure of effective filtered retrieval. Well-structured metadata turns a slow post-filter into a fast pre-filter and enables faceted search that embedding similarity cannot provide.</p>
+    <div class="diagram-grid cols-2">
+        <div class="diagram-panel accent-border">
+            <h4>Structural metadata (always extract)</h4>
+            <ul>
+                <li><code>source_url</code> / <code>file_path</code> &mdash; for provenance and citation</li>
+                <li><code>page_num</code>, <code>section_heading</code>, <code>paragraph_index</code></li>
+                <li><code>doc_type</code>: PDF / DOCX / HTML / Markdown / code</li>
+                <li><code>ingested_at</code> Unix timestamp; <code>doc_modified_at</code></li>
+                <li><code>language</code>: ISO 639-1 code (from <code>langdetect</code> or <code>lingua-py</code>)</li>
+            </ul>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Semantic metadata (enrich with LLM/NER)</h4>
+            <ul>
+                <li><code>summary</code>: 1&ndash;3 sentence chunk summary (embed separately for parent-child retrieval)</li>
+                <li><code>entities</code>: named entities (persons, orgs, products, CVEs)</li>
+                <li><code>topics</code>: top-k topic labels (zero-shot classifier or LLM)</li>
+                <li><code>citations</code>: DOI, arXiv ID, URL references within the chunk</li>
+                <li><code>confidence</code>: OCR confidence score (flag low-quality extractions)</li>
+            </ul>
+        </div>
+    </div>
+    <div class="callout">
+        <div class="callout-label">Index metadata separately from embeddings</div>
+        <p>Do not concatenate all metadata into the chunk text before embedding &mdash; it biases the embedding towards the metadata rather than the content. Store metadata as payload fields in the vector DB (Qdrant, Weaviate) or as separate columns (pgvector). Build payload indexes on high-cardinality filter fields (<code>tenant_id</code>, <code>doc_type</code>, <code>date</code>) so that the vector DB can use them for pre-filtering without a full scan.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-07">
+    <div class="slide-number">07</div>
+    <h2>Deduplication &mdash; MinHash, SimHash, Near-Duplicate Detection</h2>
+    <p>Duplicate and near-duplicate chunks harm retrieval quality: they consume index space, inflate the apparent corpus size, and cause the reranker to return the same information multiple times. Web-scraped and CMS-exported corpora routinely contain 5&ndash;30% near-duplicate content.</p>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Technique</th><th>Mechanism</th><th>Similarity threshold</th><th>Cost</th><th>Use case</th></tr></thead>
+            <tbody>
+                <tr><td><strong>Exact hash</strong></td><td>SHA-256 of normalised text. O(1) lookup.</td><td>100% only</td><td>Negligible</td><td>Remove literal duplicates (copy-paste, re-ingested files)</td></tr>
+                <tr><td><strong>SimHash</strong> (Charikar 2002)</td><td>Bit-similiarity of 64-bit fingerprints; Hamming distance &le; 3 &asymp; &ge;90% Jaccard. Fast comparison.</td><td>&asymp;90%+</td><td>O(N log N)</td><td>Near-duplicate detection in real-time ingestion pipelines</td></tr>
+                <tr><td><strong>MinHash + LSH</strong></td><td>Estimate Jaccard similarity via min-hash signatures; use Locality Sensitive Hashing to bucket candidates. Scalable to billions.</td><td>Configurable (60&ndash;95%)</td><td>O(N) with tunable recall/precision</td><td>Large-scale corpus dedup (web crawls, CommonCrawl-style pipelines)</td></tr>
+                <tr><td><strong>Embedding cosine</strong></td><td>Compute cosine similarity between chunk embeddings; deduplicate above threshold (&gt;0.97).</td><td>Semantic near-duplicates</td><td>O(N&sup2;) or ANN</td><td>Paraphrase dedup; requires embedding pass first</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="code-block">
+        <div class="code-header">MinHash deduplication with datasketch</div>
+<pre><code><span class="kw">from</span> datasketch <span class="kw">import</span> MinHash, MinHashLSH
+
+lsh = <span class="fn">MinHashLSH</span>(threshold=<span class="num">0.8</span>, num_perm=<span class="num">128</span>)
+<span class="kw">for</span> idx, chunk <span class="kw">in</span> <span class="fn">enumerate</span>(chunks):
+    m = <span class="fn">MinHash</span>(num_perm=<span class="num">128</span>)
+    <span class="kw">for</span> word <span class="kw">in</span> chunk.<span class="fn">split</span>():
+        m.<span class="fn">update</span>(word.<span class="fn">encode</span>(<span class="str">"utf-8"</span>))
+    duplicates = lsh.<span class="fn">query</span>(m)
+    <span class="kw">if not</span> duplicates:
+        lsh.<span class="fn">insert</span>(<span class="fn">str</span>(idx), m)   <span class="cm"># unique chunk</span>
+    <span class="cm"># else: skip chunk as near-duplicate</span></code></pre>
+    </div>
+</section>
+
+<section class="slide" id="slide-08">
+    <div class="slide-number">08</div>
+    <h2>Pipeline Shape &mdash; Incremental Ingestion, Embedding Refresh</h2>
+    <p>Most production RAG systems ingest continuously (new documents arrive daily or hourly) and occasionally need to re-embed (new embedding model, chunking strategy change). These are separate operational concerns.</p>
+    <div class="diagram-vertical">
+        <div class="diagram-box accent">Document store (S3 / GCS / Postgres)</div>
+        <div class="diagram-arrow">&darr;</div>
+        <div class="diagram-box">Change detection: file hash / modified_at / Kafka event</div>
+        <div class="diagram-arrow">&darr;</div>
+        <div class="diagram-box accent">Parse &amp; chunk (Docling / Unstructured)</div>
+        <div class="diagram-arrow">&darr;</div>
+        <div class="diagram-box">Dedup check (SimHash / MinHash)</div>
+        <div class="diagram-arrow">&darr;</div>
+        <div class="diagram-box accent">Embed (batch encode, GPU, bf16)</div>
+        <div class="diagram-arrow">&darr;</div>
+        <div class="diagram-box">Upsert into vector DB (Qdrant / pgvector)</div>
+    </div>
+    <div class="callout">
+        <div class="callout-label">Embedding refresh without downtime</div>
+        <p>When migrating to a new embedding model: (1) build a <em>shadow index</em> with the new model in a separate collection; (2) dual-read from old and new during the migration window; (3) A/B test on 5% of traffic; (4) cut over. Never rebuild the primary index in place &mdash; a half-migrated index has mixed-model vectors and the similarity scores are meaningless. Qdrant's collection aliases (<code>PUT /aliases</code>) make the cutover atomic from the application's perspective.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-09">
+    <div class="slide-number">09</div>
+    <h2>What to Take Away</h2>
+    <ul>
+        <li><strong>The chunk is the unit of retrieval and the unit of context.</strong> They need not be the same &mdash; use parent&ndash;child chunking to retrieve at small granularity and return at large.</li>
+        <li><strong>Fixed-size splitting fails on structured documents</strong> (tables, code, PDFs). Use structural or semantic chunking for any non-homogeneous corpus.</li>
+        <li><strong>Contextual chunking</strong> (Anthropic pattern) adds 35% relative recall improvement by prepending a per-chunk context summary at index time. Cost: one LLM call per chunk.</li>
+        <li><strong>Docling</strong> is the best open-source layout-aware parser as of 2025 for PDFs and DOCX. LlamaParse is the best cloud option for complex layouts.</li>
+        <li><strong>ColPali</strong> is the right choice for scanned documents, slide decks, and tables that text extraction destroys. It embeds page images directly; storage cost is ~500 KB per page uncompressed.</li>
+        <li><strong>Always extract structural metadata</strong> and build payload indexes on filter fields. Semantic metadata (entities, topics) should be stored separately and not concatenated into the chunk.</li>
+        <li><strong>Incremental ingestion</strong>: track document hashes; upsert changed chunks; use shadow index + alias cutover for embedding model migrations.</li>
+    </ul>
+    <div class="callout">
+        <div class="callout-label">Where to next</div>
+        <p>Deck 05 covers agentic RAG patterns: HyDE, query decomposition, Self-RAG, CRAG, iterative retrieval loops, query routing, and tool-using RAG combining retrieval with code execution and web search.</p>
+    </div>
+</section>
+
+<footer class="footer">
+    <p>Part of the <a href="https://github.com/BrendanJamesLynskey/LLM_Hub_RAG_Retrieval">RAG &amp; Retrieval Systems Series</a></p>
+    <p style="margin-top:0.5rem;font-size:0.8rem;"><a href="https://github.com/BrendanJamesLynskey/LLM_Hub_RAG_Retrieval">Back to Series Index</a></p>
+</footer>
+<script>
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function (e) {
+            e.preventDefault();
+            const target = document.querySelector(this.getAttribute('href'));
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.style.opacity = '1';
+                entry.target.style.transform = 'translateY(0)';
+            }
+        });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.slide').forEach(slide => {
+        slide.style.opacity = '0';
+        slide.style.transform = 'translateY(30px)';
+        slide.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+        observer.observe(slide);
+    });
+</script>
+</body>
+</html>
